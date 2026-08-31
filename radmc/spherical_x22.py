@@ -1,6 +1,6 @@
 import numpy as np
 from X22_model.disk_model import *
-from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import interp2d
 from scipy.optimize import minimize_scalar
 # All unit are in cgs except height and radius are in au
 #########################################################################################
@@ -15,18 +15,12 @@ class DiskModel_spherical:
         """
         Run Wenrui's radial profile to get initial r-dependent profiles.
 
-        Parameters
-        -----------------
-        Mstar     : float
-            Mass of protostar
-        Mdot      : float
-            Rate of mass infall from the envelope onto the disk
-        Rd        : float
-            Radius of the disk
-        Q         : float
-            Toomre index
-        N_R       : float
-            Resolution of radius grid (Default = 500)
+        Args:
+            Mstar     : mass of protostar
+            Mdot      : rate of mass infall from the envelope onto the disk
+            Rd        : radius of the disk
+            Q         : Toomre index
+            N_R       : resolution of radius grid (Default = 500)
         """
         self.Mstar = Mstar
         self.Mdot  = Mdot
@@ -129,7 +123,7 @@ class DiskModel_spherical:
                 rho_map[r, :] = 1e-20 * np.ones((len(self.Z_grid)))
                 m_map[r, :]   = 1e-20 * np.ones((len(self.Z_grid)))
         
-        self.rho_map = np.maximum(rho_map, 1e-18)
+        self.rho_map = np.maximum(rho_map, 1e-20)
         self.m_map   = m_map
         self.H       = h_grid
         self.make_tau_and_T_map()
@@ -197,27 +191,21 @@ class DiskModel_spherical:
         # kappa_r_map = kappa_r_map[:, ::-1]
         
         T_map = np.concatenate((20*np.ones((self.mask_index, self.NZ)), T_map), axis=0)
-        T_map = np.where(self.rho_map<=1e-18,
+        T_map = np.where(self.rho_map<=1e-20,
                          20,
                          T_map)
         self.T_map = np.maximum(T_map, 20)
 
-    def extend_to_spherical(self, NTheta, NPhi, theta_min_deg=20):
+    def extend_to_spherical(self, NTheta, NPhi, theta_min_deg=30):
 
         """
         Extend the disk model to spherical coordinates
-
-        Parameters
-        ------------------
-        NTheta          : float
-            The number of theta grid
-        NPhi            : float
-            The number of phi grid
-        theta_min_deg   : float
-            The minimum angle of theta grid (Default = 30 degree)
-
+        Args:
+        NTheta          : number of theta grid
+        NPhi            : number of phi grid
+        theta_min_deg   : the minimum angle of theta grid (Default = 30 degree)
         """
-        self.NTheta = NTheta # since theta is symmetric, we only need half of the grid
+        self.NTheta = NTheta
         self.NPhi = NPhi  
 
         pos_map = self.pos_map.copy()        
@@ -228,12 +216,12 @@ class DiskModel_spherical:
         self.r_sph = r_grid
 
         theta_map = np.arccos(pos_map[:, :, 1]/r_map)
-        theta_min = np.max([np.deg2rad(theta_min_deg), 
-                           np.pi/2-3*np.arctan(self.H[-1]/self.R_grid[-1])]) # the starting angle of theta
-        theta_grid = np.logspace(np.log10(theta_min), np.log10(np.max(theta_map)), NTheta//2)  
+        theta_min = np.max(np.deg2rad(theta_min_deg), 
+                           np.pi/2-3*np.arctan(self.H[:-1]/self.R_grid[:-1])) # the starting angle of theta
+        theta_grid = np.logspace(np.log10(theta_min), np.log10(np.max(theta_map)), NTheta)
         theta_grid = -1*theta_grid + 0.5*np.pi + theta_min
-        theta_grid = theta_grid[::-1] - 1e-5 # 1e-4 is to meet the RADMC's requirement that the theta boundary must contain pi/2
-        theta_grid_down = -theta_grid[::-1] + np.pi + 1e-5
+        theta_grid = theta_grid[::-1]       
+        theta_grid_down = -theta_grid[::-1] + np.pi
         self.theta_sph = np.concatenate((theta_grid, theta_grid_down))     
     
         """
@@ -247,24 +235,16 @@ class DiskModel_spherical:
         i                : index of r_sph
         j                : index of theta_sph
         '''
-        # def interpolate(data_map):  
-        #     interpolator = interp2d(self.Z_grid, self.R_grid, data_map, kind='linear')
-        #     interpolated_data = np.empty((self.NR, self.NTheta//2))
-        #     for r in range(self.NR):
-        #         for theta in range(self.NTheta//2): 
-        #             interpolated_data[r, theta] = interpolator(z_sph_in_cyl[r, theta], r_sph_in_cyl[r, theta])            
-        #     return interpolated_data
         def interpolate(data_map):  
-            interpolator = RegularGridInterpolator((self.Z_grid, self.R_grid), data_map.T, bounds_error=False, fill_value=None)
-            interpolated_data = np.empty((self.NR, self.NTheta//2))
+            interpolator = interp2d(self.Z_grid, self.R_grid, data_map, kind='linear')
+            interpolated_data = np.empty((self.NR, self.NTheta))
             for r in range(self.NR):
-                for theta in range(self.NTheta//2):
-                    point = [z_sph_in_cyl[r, theta], r_sph_in_cyl[r, theta]]
-                    interpolated_data[r, theta] = interpolator(point)          
-            return interpolated_data     
+                for theta in range(self.NTheta):
+                    interpolated_data[r, theta] = interpolator(z_sph_in_cyl[r, theta], r_sph_in_cyl[r, theta])            
+            return interpolated_data    
         def mirror_with_r_plane(map):
             map_mirror = np.fliplr(map)            
-            return np.concatenate((map, map_mirror), axis= 1)        
+            return np.concatenate((map[:, :-1], map_mirror), axis= 1)        
         def rotate_around_theta_axis(map):
             map_3d = np.tile(map[:, :, np.newaxis], (1, 1, self.NPhi))            
             return map_3d
@@ -286,12 +266,7 @@ class DiskModel_spherical:
             grid = grid - difference
             return np.append(grid, grid[-1] + 2*difference[-1])
         self.r_sph_grid = make_boundary(self.r_sph)*au
-        theta_sph_grid_top = make_boundary(self.theta_sph[:self.NTheta//2])
-        # theta_sph_grid_top[self.NTheta//2] = np.pi/2
-        theta_sph_grid_bottom = make_boundary(self.theta_sph[self.NTheta//2:])
-        theta_sph_grid = np.concatenate((theta_sph_grid_top, theta_sph_grid_bottom))
-        theta_sph_grid = np.delete(theta_sph_grid, [self.NTheta//2, self.NTheta//2])
-        theta_sph_grid[self.NTheta//2] = np.pi/2
+        theta_sph_grid = make_boundary(self.theta_sph)
+        theta_sph_grid = np.delete(theta_sph_grid, self.NTheta)
         self.theta_sph_grid = theta_sph_grid
         self.phi_sph_grid = np.linspace(0, 2*np.pi, self.NPhi+1)
-        self.phi_sph = (self.phi_sph_grid[:-1] + self.phi_sph_grid[1:]) / 2
