@@ -15,12 +15,18 @@ class DiskModel_spherical:
         """
         Run Wenrui's radial profile to get initial r-dependent profiles.
 
-        Args:
-            Mstar     : mass of protostar
-            Mdot      : rate of mass infall from the envelope onto the disk
-            Rd        : radius of the disk
-            Q         : Toomre index
-            N_R       : resolution of radius grid (Default = 500)
+        Parameters
+        -----------------
+        Mstar     : float
+            Mass of protostar
+        Mdot      : float
+            Rate of mass infall from the envelope onto the disk
+        Rd        : float
+            Radius of the disk
+        Q         : float
+            Toomre index
+        N_R       : float
+            Resolution of radius grid (Default = 500)
         """
         self.Mstar = Mstar
         self.Mdot  = Mdot
@@ -200,10 +206,16 @@ class DiskModel_spherical:
 
         """
         Extend the disk model to spherical coordinates
-        Args:
-        NTheta          : number of theta grid
-        NPhi            : number of phi grid
-        theta_min_deg   : the minimum angle of theta grid (Default = 30 degree)
+
+        Parameters
+        ------------------
+        NTheta          : float
+            The number of theta grid
+        NPhi            : float
+            The number of phi grid
+        theta_min_deg   : float
+            The minimum angle of theta grid (Default = 30 degree)
+
         """
         self.NTheta = NTheta
         self.NPhi = NPhi  
@@ -267,7 +279,12 @@ class DiskModel_spherical:
             grid = grid - difference
             return np.append(grid, grid[-1] + 2*difference[-1])
         self.r_sph_grid = make_boundary(self.r_sph)*au
-        theta_sph_grid = make_boundary(self.theta_sph)
-        theta_sph_grid = np.delete(theta_sph_grid, self.NTheta)
+        theta_sph_grid_top = make_boundary(self.theta_sph[:self.NTheta//2])
+        # theta_sph_grid_top[self.NTheta//2] = np.pi/2
+        theta_sph_grid_bottom = make_boundary(self.theta_sph[self.NTheta//2:])
+        theta_sph_grid = np.concatenate((theta_sph_grid_top, theta_sph_grid_bottom))
+        theta_sph_grid = np.delete(theta_sph_grid, [self.NTheta//2, self.NTheta//2])
+        theta_sph_grid[self.NTheta//2] = np.pi/2
         self.theta_sph_grid = theta_sph_grid
         self.phi_sph_grid = np.linspace(0, 2*np.pi, self.NPhi+1)
+        self.phi_sph = (self.phi_sph_grid[:-1] + self.phi_sph_grid[1:]) / 2
